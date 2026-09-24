@@ -1,0 +1,11 @@
+# Downloaded packages - can be reinstalled anytime
+node_modules/
+
+# Secrets and passwords
+.env*
+
+# Terraform working files and state (can contain secrets)
+.terraform/
+*.tfstate*
+*.tfvars
+*.tfplan
