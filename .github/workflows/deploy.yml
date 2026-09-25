@@ -62,6 +62,8 @@ jobs:
 
       - name: Security check
         run: |
+          # NEW: ask ECR to start scanning the image
+          aws ecr start-image-scan --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG || true
           aws ecr wait image-scan-complete --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG
           CRITICAL=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPOSITORY \
             --image-id imageTag=$IMAGE_TAG \

@@ -31,5 +31,5 @@ variable "image_tag" {
 variable "github_repo" {
   description = "GitHub repo allowed to deploy (owner/name)"
   type        = string
-  default     = "uzoebele/uzo-cicd-ecs"
+  default     = "uzoebele@209199438/uzo-cicd-ecs@1384499721"
 }
