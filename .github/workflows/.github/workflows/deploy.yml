@@ -1,0 +1,103 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'infra/**'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    name: Build, test and deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t app:$IMAGE_TAG .
+
+      - name: Test the container
+        run: |
+          docker run -d --name app -p 3000:3000 --read-only --cap-drop ALL app:$IMAGE_TAG
+          for i in $(seq 1 10); do
+            curl -fsS http://localhost:3000/health && break
+            sleep 2
+          done
+          curl -fsS http://localhost:3000/ | grep "Hello from CI/CD Pipeline"
+
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push the image to ECR
+        id: push
+        run: |
+          IMAGE=${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag app:$IMAGE_TAG $IMAGE
+          docker push $IMAGE
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Security check
+        run: |
+          aws ecr wait image-scan-complete --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG
+          CRITICAL=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=$IMAGE_TAG \
+            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' --output text)
+          echo "Critical findings: $CRITICAL"
+          if [ "$CRITICAL" != "None" ] && [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Critical vulnerabilities found. Deployment blocked."
+            exit 1
+          fi
+
+      - name: Get the current task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ vars.TASK_FAMILY }} \
+            --query taskDefinition > task-def.json
+
+      - name: Put the new image into the task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ vars.CONTAINER_NAME }}
+          image: ${{ steps.push.outputs.image }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Test the live site
+        run: |
+          for i in $(seq 1 10); do
+            curl -fsS ${{ vars.APP_URL }}/health && exit 0
+            sleep 6
+          done
+          echo "::error::Live site did not respond"
+          exit 1
