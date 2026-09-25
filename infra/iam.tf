@@ -78,6 +78,7 @@ data "aws_iam_policy_document" "github_deploy" {
       "ecr:BatchGetImage",
       "ecr:DescribeImages",
       "ecr:DescribeImageScanFindings",
+            "ecr:StartImageScan",
     ]
     resources = [aws_ecr_repository.app.arn]
   }
